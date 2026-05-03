@@ -29,10 +29,3 @@
 
 ```bash
 TOKEN=sk-XXXXXXXXXXXXXXXX bash -c "$(curl -sSL https://raw.githubusercontent.com/firozsarkar/FreeSWITCH/main/install.sh)"
-```bash
-# স্ক্রিপ্ট ডাউনলোড করে রান করুন
-curl -sSL https://raw.githubusercontent.com/firozsarkar/FreeSWITCH/main/install.sh -o install.sh
-chmod +x install.sh
-TOKEN=sk-XXXXXXXXXXXXXXXX ./install.sh ```
-
-
