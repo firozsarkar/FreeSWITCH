@@ -1,98 +1,124 @@
 #!/bin/bash
 
 echo "=========================================="
-echo "  FreeSWITCH Fail2Ban Auto Setup"
+echo " FreeSWITCH Fail2Ban FULL AUTO FIX"
 echo "=========================================="
 
 # Root check
 if [ "$EUID" -ne 0 ]; then
-  echo "Please run as root"
+  echo "Run as root"
   exit 1
 fi
 
-echo "[1/8] Updating system..."
+echo "[1/10] Updating packages..."
 apt update -y
 
-echo "[2/8] Installing Fail2Ban..."
-apt install fail2ban -y
+echo "[2/10] Installing Fail2Ban..."
+apt install fail2ban iptables -y
 
-echo "[3/8] Creating FreeSWITCH filter..."
+echo "[3/10] Removing old configs..."
+rm -f /etc/fail2ban/jail.local
+rm -f /etc/fail2ban/filter.d/freeswitch.conf
+
+echo "[4/10] Creating FreeSWITCH filter..."
 
 cat > /etc/fail2ban/filter.d/freeswitch.conf << 'EOF'
 [Definition]
 
-failregex = .*sofia_reg.c:\d+ Can't find user \[.*\] from <HOST>.*
-            .*SIP auth failure.*ip=<HOST>.*
+failregex = .*SIP auth failure.*ip=<HOST>.*
             .*AUTH FAILURE.*<HOST>.*
             .*invalid password.*<HOST>.*
-            .*registration failure.*<HOST>.*
             .*wrong password.*<HOST>.*
             .*Rejected by acl.*<HOST>.*
+            .*Can't find user.*from <HOST>.*
+            .*registration failure.*<HOST>.*
 
 ignoreregex =
 EOF
 
-echo "[4/8] Creating jail.local..."
+echo "[5/10] Checking FreeSWITCH log..."
+
+mkdir -p /var/log/freeswitch
+
+touch /var/log/freeswitch/freeswitch.log
+
+chmod 644 /var/log/freeswitch/freeswitch.log
+
+echo "[6/10] Creating jail.local..."
 
 cat > /etc/fail2ban/jail.local << 'EOF'
 [DEFAULT]
-bantime  = 1h
-findtime = 10m
+bantime = 3600
+findtime = 600
 maxretry = 5
-backend  = auto
+backend = auto
+banaction = iptables-multiport
 ignoreip = 127.0.0.1/8
 
 [sshd]
 enabled = false
 
 [freeswitch]
-enabled  = true
-port     = 5060,5061
-protocol = udp
-filter   = freeswitch
-logpath  = /var/log/freeswitch/freeswitch.log
+enabled = true
+filter = freeswitch
+port = 5060,5061
+protocol = all
+logpath = /var/log/freeswitch/freeswitch.log
+backend = auto
 maxretry = 5
-findtime = 10m
-bantime  = 1h
-action   = iptables-allports[name=freeswitch]
+findtime = 600
+bantime = 3600
 
 [recidive]
-enabled  = true
-logpath  = /var/log/fail2ban.log
-bantime  = 1w
-findtime = 1d
+enabled = true
+logpath = /var/log/fail2ban.log
+bantime = 604800
+findtime = 86400
 maxretry = 3
 EOF
 
-echo "[5/8] Restarting Fail2Ban..."
+echo "[7/10] Testing Fail2Ban config..."
+
+fail2ban-client -d > /tmp/fail2ban-test.txt 2>&1
+
+if grep -q "ERROR" /tmp/fail2ban-test.txt; then
+    echo "Fail2Ban config error found!"
+    cat /tmp/fail2ban-test.txt
+    exit 1
+fi
+
+echo "[8/10] Restarting Fail2Ban..."
+
+systemctl daemon-reload
 systemctl enable fail2ban
 systemctl restart fail2ban
 
-echo "[6/8] Checking service..."
+sleep 5
+
+echo "[9/10] Service Status..."
 systemctl --no-pager status fail2ban
 
-echo "[7/8] Jail status..."
+echo ""
+echo "[10/10] Active Jails..."
 fail2ban-client status
 
-echo "[8/8] FreeSWITCH jail status..."
+echo ""
+echo "=========================================="
+echo " FreeSWITCH Jail Details"
+echo "=========================================="
+
 fail2ban-client status freeswitch
 
+echo ""
 echo "=========================================="
-echo "  Fail2Ban Setup Completed!"
+echo " INSTALL COMPLETED SUCCESSFULLY"
 echo "=========================================="
 
 echo ""
 echo "Useful Commands:"
-echo "------------------------------"
-echo "Check all jails:"
+echo "--------------------------------"
 echo "fail2ban-client status"
-echo ""
-echo "Check FreeSWITCH jail:"
 echo "fail2ban-client status freeswitch"
-echo ""
-echo "Live logs:"
 echo "tail -f /var/log/fail2ban.log"
-echo ""
-echo "Watch banned IPs:"
 echo "watch -n 2 fail2ban-client status freeswitch"
-echo "=========================================="
+echo "--------------------------------"
