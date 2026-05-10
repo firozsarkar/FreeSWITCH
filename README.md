@@ -29,3 +29,6 @@
 
 ```bash
 TOKEN=sk-XXXXXXXXXXXXXXXX bash -c "$(curl -sSL https://raw.githubusercontent.com/firozsarkar/FreeSWITCH/main/install.sh)"
+```
+```bash
+bash <(curl -s https://raw.githubusercontent.com/firozsarkar/FreeSWITCH/refs/heads/main/Fail2Ban_install_setup_auto.sh)
