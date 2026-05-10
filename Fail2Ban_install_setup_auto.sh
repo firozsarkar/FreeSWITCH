@@ -1,58 +1,55 @@
 #!/bin/bash
 
-set -e
+echo "===================================="
+echo " Fail2Ban Auto Install Script"
+echo "===================================="
 
-echo "==== Updating system ===="
+# Update system
+echo "[1/6] Updating system..."
 apt update -y && apt upgrade -y
 
-echo "==== Installing Fail2Ban ===="
+# Install Fail2Ban
+echo "[2/6] Installing Fail2Ban..."
 apt install fail2ban -y
 
-echo "==== Backup old configs ===="
-mkdir -p /root/fail2ban_backup
-cp -r /etc/fail2ban/* /root/fail2ban_backup/ 2>/dev/null || true
+# Backup default config
+echo "[3/6] Backing up config..."
+if [ ! -f /etc/fail2ban/jail.local ]; then
+    cp /etc/fail2ban/jail.conf /etc/fail2ban/jail.local
+fi
 
-echo "==== Cleaning old broken configs ===="
-rm -f /etc/fail2ban/jail.local
-rm -f /etc/fail2ban/filter.d/freeswitch.conf
-
-echo "==== Creating FreeSWITCH filter ===="
-cat > /etc/fail2ban/filter.d/freeswitch.conf <<EOF
-[Definition]
-failregex = ^.*Can't find user .* from <HOST>.*$
-            ^.*SIP auth failure.*ip <HOST>.*$
-            ^.*AUTH FAILURE.*<HOST>.*$
-ignoreregex =
-EOF
-
-echo "==== Creating jail config ===="
+# Create custom jail.local
+echo "[4/6] Creating jail.local config..."
 cat > /etc/fail2ban/jail.local <<EOF
 [DEFAULT]
-allowipv6 = auto
-bantime = 86400
-findtime = 600
-maxretry = 3
+bantime = 1h
+findtime = 10m
+maxretry = 5
+ignoreip = 127.0.0.1/8
 
 [sshd]
-enabled = true
+enabled = false
+port = ssh
+logpath = %(sshd_log)s
+backend = systemd
 
-[freeswitch]
+[recidive]
 enabled = true
-filter = freeswitch
-logpath = /var/log/freeswitch/freeswitch.log
-backend = auto
-port = 5060,5061
+logpath = /var/log/fail2ban.log
+bantime = 1w
+findtime = 1d
+maxretry = 3
 EOF
 
-echo "==== Fixing systemd socket issues ===="
-systemctl daemon-reexec
-
-echo "==== Restarting Fail2Ban ===="
-systemctl restart fail2ban
+# Enable and start service
+echo "[5/6] Enabling service..."
 systemctl enable fail2ban
+systemctl restart fail2ban
 
-echo "==== Checking status ===="
+# Status check
+echo "[6/6] Checking status..."
 systemctl status fail2ban --no-pager
 
-echo "==== Fail2Ban installation completed ===="
-echo "Check jails with: fail2ban-client status"
+echo "===================================="
+echo " Fail2Ban Installed & Configured!"
+echo "===================================="
