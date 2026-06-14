@@ -1,0 +1,171 @@
+#!/bin/bash
+
+# ==============================================================================
+# Script Name: Fail2Ban_install_and_auto_setup.sh
+# Description: Full automated installation and configuration of Fail2Ban 
+#              optimized for Debian 11 & 12, specifically configured for FreeSWITCH.
+# ==============================================================================
+
+# Ensure the script is run as root
+if [ "$EUID" -ne 0 ]; then
+    echo "ERROR: This script must be run as root or with sudo privileges."
+    exit 1
+fi
+
+echo "================================================================="
+echo " Starting Fail2Ban Automated Installation & Configuration"
+echo " Target System: Debian 11 / Debian 12"
+echo "================================================================="
+
+# ------------------------------------------------------------------------------
+# Step 1: System Package Update and Prerequisites Installation
+# ------------------------------------------------------------------------------
+echo "--> [1/10] Updating package repositories..."
+apt update -y
+
+echo "--> [2/10] Installing Fail2Ban, iptables, and systemd-python dependencies..."
+# python3-systemd is required on Debian 11/12 so Fail2Ban can parse systemd journals directly
+apt install fail2ban iptables python3-systemd -y
+
+# ------------------------------------------------------------------------------
+# Step 2: Cleanup Dead Sockets, Lock Files, and Legacy Configurations
+# ------------------------------------------------------------------------------
+echo "--> [3/10] Clearing older socket paths and old configurations..."
+systemctl stop fail2ban >/dev/null 2>&1
+rm -f /var/run/fail2ban/fail2ban.sock
+rm -f /var/run/fail2ban/fail2ban.pid
+rm -f /etc/fail2ban/jail.local
+rm -f /etc/fail2ban/filter.d/freeswitch.conf
+
+# ------------------------------------------------------------------------------
+# Step 3: Create Custom FreeSWITCH Filter
+# ------------------------------------------------------------------------------
+echo "--> [4/10] Creating FreeSWITCH filter definition..."
+
+cat > /etc/fail2ban/filter.d/freeswitch.conf << 'EOF'
+[Definition]
+failregex = .*SIP auth failure.*ip=<HOST>.*
+            .*AUTH FAILURE.*<HOST>.*
+            .*invalid password.*<HOST>.*
+            .*wrong password.*<HOST>.*
+            .*Rejected by acl.*<HOST>.*
+            .*Can't find user.*from <HOST>.*
+            .*registration failure.*<HOST>.*
+ignoreregex =
+EOF
+
+# ------------------------------------------------------------------------------
+# Step 4: Ensure FreeSWITCH Log Directory Exists
+# ------------------------------------------------------------------------------
+echo "--> [5/10] Verifying FreeSWITCH logging ecosystem..."
+mkdir -p /var/log/freeswitch
+touch /var/log/freeswitch/freeswitch.log
+chmod 644 /var/log/freeswitch/freeswitch.log
+
+# ------------------------------------------------------------------------------
+# Step 5: Generate Tailored jail.local for Debian 11/12
+# ------------------------------------------------------------------------------
+echo "--> [6/10] Deploying unified jail.local..."
+
+cat > /etc/fail2ban/jail.local << 'EOF'
+[DEFAULT]
+bantime = 3600
+findtime = 600
+maxretry = 5
+# Systemd backend is natively forced for core system services on Debian 11/12
+backend = systemd
+banaction = iptables-multiport
+ignoreip = 127.0.0.1/8
+
+[sshd]
+enabled = true
+port = ssh
+logpath = %(sshd_log)s
+backend = systemd
+
+[freeswitch]
+enabled = true
+filter = freeswitch
+port = 5060,5061
+protocol = all
+logpath = /var/log/freeswitch/freeswitch.log
+# Using polling/auto for flat text logs outside systemd journal
+backend = auto
+maxretry = 5
+findtime = 600
+bantime = 3600
+
+[recidive]
+enabled = true
+logpath = /var/log/fail2ban.log
+backend = auto
+bantime = 604800
+findtime = 86400
+maxretry = 3
+EOF
+
+# ------------------------------------------------------------------------------
+# Step 6: Configuration Integrity Verification
+# ------------------------------------------------------------------------------
+echo "--> [7/10] Testing Fail2Ban configuration for syntax validation..."
+
+if fail2ban-server -t > /dev/null 2>&1; then
+    echo "✔ Configuration syntax validation passed successfully."
+else
+    echo "✘ Configuration syntax error discovered! Inspecting configuration..."
+    fail2ban-server -t
+    exit 1
+fi
+
+# ------------------------------------------------------------------------------
+# Step 7: Service Initialization and Execution
+# ------------------------------------------------------------------------------
+echo "--> [8/10] Initializing Fail2Ban engine daemon..."
+
+systemctl daemon-reload
+systemctl enable fail2ban
+systemctl restart fail2ban
+
+# Allow time for the socket initialization process to complete
+sleep 3
+
+# ------------------------------------------------------------------------------
+# Step 8: Operational Status Check
+# ------------------------------------------------------------------------------
+echo "--> [9/10] Analyzing service runtime environment..."
+
+if [ -S /var/run/fail2ban/fail2ban.sock ]; then
+    echo "✔ Socket connection initialized successfully."
+    echo ""
+    systemctl --no-pager status fail2ban
+else
+    echo "✘ Fail2Ban failed to initialize its socket channel. Reviewing system logs:"
+    journalctl -u fail2ban --no-pager -n 20
+    exit 1
+fi
+
+# ------------------------------------------------------------------------------
+# Step 9: Jail Verification Matrix
+# ------------------------------------------------------------------------------
+echo ""
+echo "--> [10/10] Querying active Jail Matrix..."
+echo "----------------------------------------------------------------="
+fail2ban-client status
+echo "----------------------------------------------------------------="
+
+echo ""
+echo "================================================================="
+echo " FreeSWITCH Specific Jail Details"
+echo "================================================================="
+fail2ban-client status freeswitch
+
+echo ""
+echo "================================================================="
+echo " DEPLOYMENT AND CONFIGURATION COMPLETE"
+echo "================================================================="
+echo "Operational Commands Matrix:"
+echo " - View General Status:       fail2ban-client status"
+echo " - View FreeSWITCH Status:  fail2ban-client status freeswitch"
+echo " - Live Log Monitoring:      tail -f /var/log/fail2ban.log"
+echo " - Realtime Prison Watch:    watch -n 2 fail2ban-client status freeswitch"
+echo "================================================================="
