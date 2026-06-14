@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # ==============================================================================
-# Script Name: Fail2Ban_install_and_auto_setup.sh
-# Description: Full automated installation and configuration of Fail2Ban 
-#              optimized for Debian 11 & 12, specifically configured for FreeSWITCH.
+# Script Name: Fail2Ban.sh
+# Description: Full automated installation and optimization of Fail2Ban 
+#              specifically tuned for Debian 11/12, FreeSWITCH, and nftables.
 # ==============================================================================
 
 # Ensure the script is run as root
@@ -14,7 +14,7 @@ fi
 
 echo "================================================================="
 echo " Starting Fail2Ban Automated Installation & Configuration"
-echo " Target System: Debian 11 / Debian 12"
+echo " Target System: Debian 11 / Debian 12 (Optimized with nftables)"
 echo "================================================================="
 
 # ------------------------------------------------------------------------------
@@ -23,9 +23,9 @@ echo "================================================================="
 echo "--> [1/10] Updating package repositories..."
 apt update -y
 
-echo "--> [2/10] Installing Fail2Ban, iptables, and systemd-python dependencies..."
-# python3-systemd is required on Debian 11/12 so Fail2Ban can parse systemd journals directly
-apt install fail2ban iptables python3-systemd -y
+echo "--> [2/10] Installing Fail2Ban, nftables, and systemd dependencies..."
+# Installing python3-systemd for Debian native logs and nftables for bulletproof blocking
+apt install fail2ban nftables python3-systemd -y
 
 # ------------------------------------------------------------------------------
 # Step 2: Cleanup Dead Sockets, Lock Files, and Legacy Configurations
@@ -63,18 +63,16 @@ touch /var/log/freeswitch/freeswitch.log
 chmod 644 /var/log/freeswitch/freeswitch.log
 
 # ------------------------------------------------------------------------------
-# Step 5: Generate Tailored jail.local for Debian 11/12
+# Step 5: Generate Tailored jail.local with nftables & Lifetime Ban
 # ------------------------------------------------------------------------------
 echo "--> [6/10] Deploying unified jail.local..."
 
 cat > /etc/fail2ban/jail.local << 'EOF'
 [DEFAULT]
-bantime = 3600
-findtime = 600
-maxretry = 5
-# Systemd backend is natively forced for core system services on Debian 11/12
+# Forced native systemd backend for system log scanning on Debian 11/12
 backend = systemd
-banaction = iptables-multiport
+# Fixed Ghost Hits by routing bans directly through modern Debian nftables architecture
+banaction = nftables[type=allports]
 ignoreip = 127.0.0.1/8
 
 [sshd]
@@ -89,19 +87,20 @@ filter = freeswitch
 port = 5060,5061
 protocol = all
 logpath = /var/log/freeswitch/freeswitch.log
-# Using polling/auto for flat text logs outside systemd journal
 backend = auto
-maxretry = 5
-findtime = 600
-bantime = 3600
+maxretry = 2
+findtime = 3600
+# Permanent/Lifetime block for aggressive attackers
+bantime = -1  
 
 [recidive]
 enabled = true
 logpath = /var/log/fail2ban.log
 backend = auto
-bantime = 604800
+maxretry = 2
 findtime = 86400
-maxretry = 3
+# Permanent/Lifetime block for repeated offenders
+bantime = -1
 EOF
 
 # ------------------------------------------------------------------------------
@@ -163,7 +162,7 @@ echo ""
 echo "================================================================="
 echo " DEPLOYMENT AND CONFIGURATION COMPLETE"
 echo "================================================================="
-echo "Operational Commands Matrix:"
+echo "Useful Commands Matrix:"
 echo " - View General Status:       fail2ban-client status"
 echo " - View FreeSWITCH Status:  fail2ban-client status freeswitch"
 echo " - Live Log Monitoring:      tail -f /var/log/fail2ban.log"
