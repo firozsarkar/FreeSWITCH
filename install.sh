@@ -74,7 +74,7 @@ filter   = freeswitch
 logpath  = /var/log/freeswitch/freeswitch.log
 maxretry = 5
 findtime = 600
-bantime  = 3600
+bantime  = -1
 backend  = polling
 EOF
 
