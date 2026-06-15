@@ -1,22 +1,24 @@
 #!/bin/bash
-# ================================================
-# Full FreeSWITCH + Welcome Page Installer
-# Debian 11 / Debian 12
-# ================================================
+# =================================================================
+# Full FreeSWITCH + PHP 8.2 + Fail2Ban + Glassmorphism Welcome Page
+# Supported OS: Debian 11 / Debian 12
+# Author: Firoz Sarkar
+# =================================================================
 
 set -e  # Exit on any error
 
-echo "🚀 FreeSWITCH + Web Welcome Page Installer চলছে..."
+echo "🚀 FreeSWITCH + Web Welcome Page (with PHP 8.2 & Fail2Ban) Installer চলছে..."
 
-# =======================
-# 1. Update System
-# =======================
+# ==========================================
+# ১. সিস্টেম আপডেট এবং ডিপেন্ডেন্সি ইনস্টল
+# ==========================================
+echo "🔄 সিস্টেম আপডেট করা হচ্ছে..."
 apt update && apt upgrade -y
-apt install -y curl git lsb-release gnupg2 apache2
+apt install -y curl git lsb-release gnupg2 apache2 software-properties-common ufw
 
-# =======================
-# 2. SignalWire Token Check
-# =======================
+# ==========================================
+# ২. SignalWire Token চেক
+# ==========================================
 if [ -z "$TOKEN" ]; then
     echo "❌ Error: TOKEN পাওয়া যায়নি!"
     echo "এভাবে রান করুন:"
@@ -26,9 +28,27 @@ fi
 
 echo "✅ SignalWire Token গৃহীত হয়েছে।"
 
-# =======================
-# 3. Install FreeSWITCH
-# =======================
+# ==========================================
+# ৩. PHP 8.2 ইনস্টলেশন (Debian-এর জন্য Repository সহ)
+# ==========================================
+echo "📦 PHP 8.2 ইনস্টল করা হচ্ছে..."
+SUITE=$(lsb_release -sc)
+
+# SURY PHP Repository যোগ করা হচ্ছে
+curl -sSLo /usr/share/keyrings/deb.sury.org-php.gpg https://packages.sury.org/php/apt.gpg
+echo "deb [signed-by=/usr/share/keyrings/deb.sury.org-php.gpg] https://packages.sury.org/php/ $SUITE main" > /etc/apt/sources.list.d/php.list
+
+apt update
+apt install -y php8.2 php8.2-cli libapache2-mod-php8.2 php8.2-common php8.2-curl php8.2-xml
+
+# Apache-তে PHP 8.2 এনাবল করা
+a2enmod php8.2
+systemctl restart apache2
+echo "✅ PHP 8.2 ইনস্টলেশন সম্পন্ন হয়েছে।"
+
+# ==========================================
+# ৪. FreeSWITCH ইনস্টলেশন
+# ==========================================
 echo "📦 FreeSWITCH ইনস্টল করা হচ্ছে..."
 
 curl -sSL https://freeswitch.org/fsget | bash -s $TOKEN release install
@@ -37,82 +57,188 @@ curl -sSL https://freeswitch.org/fsget | bash -s $TOKEN release install
 systemctl enable freeswitch
 systemctl start freeswitch
 
-echo "✅ FreeSWITCH ইনস্টল ও চালু হয়েছে।"
+echo "✅ FreeSWITCH ইনস্টল ও चालू হয়েছে।"
 
-# =======================
-# 4. Create Welcome Page
-# =======================
+# ==========================================
+# ৫. Fail2Ban ফুল অটোমেটিক কনফিগারেশন
+# ==========================================
+echo "🛡️ Fail2Ban ইনস্টল ও সিকিউরিটি কনফিগার করা হচ্ছে..."
+apt install -y fail2ban
+
+# FreeSWITCH এর জন্য Fail2Ban Jail তৈরি
+cat > /etc/fail2ban/jail.d/freeswitch.local << 'EOF'
+[freeswitch]
+enabled  = true
+port     = 5060,5061,5080,5081
+filter   = freeswitch
+logpath  = /var/log/freeswitch/freeswitch.log
+maxretry = 5
+findtime = 600
+bantime  = 3600
+backend  = polling
+EOF
+
+# Fail2Ban রিস্টার্ট এবং অটো-স্টার্ট
+systemctl enable fail2ban
+systemctl restart fail2ban
+echo "✅ Fail2Ban সিকিউরিটি সেটআপ সম্পন্ন হয়েছে (FreeSWITCH Port সুরক্ষিত)।"
+
+# ==========================================
+# ৬. Glassmorphism UI সহ Welcome Page তৈরি
+# ==========================================
 echo "🌐 Web Welcome Page তৈরি করা হচ্ছে..."
 
 mkdir -p /var/www/html
+rm -f /var/www/html/index.html # Default Apache page রিমুভ
 
 cat > /var/www/html/index.php << 'EOF'
 <?php
 $ip = $_SERVER['SERVER_ADDR'] ?? 'Unknown';
+$fs_status = shell_exec("systemctl is-active freeswitch") ? trim(shell_exec("systemctl is-active freeswitch")) : 'unknown';
+$f2b_status = shell_exec("systemctl is-active fail2ban") ? trim(shell_exec("systemctl is-active fail2ban")) : 'unknown';
 ?>
 <!DOCTYPE html>
 <html lang="bn">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Welcome - FreeSWITCH Server</title>
+    <title>Welcome - FreeSWITCH Core Platform</title>
     <style>
         body {
-            font-family: Arial, sans-serif;
-            background: linear-gradient(135deg, #667eea, #764ba2);
-            color: white;
-            text-align: center;
-            padding: 80px 20px;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: radial-gradient(circle at center, #1e1e2f 0%, #0f0f1a 100%);
+            color: #ffffff;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
             margin: 0;
+            overflow: hidden;
         }
+        /* Glassmorphic Container */
         .container {
-            max-width: 700px;
-            margin: auto;
-            background: rgba(0,0,0,0.2);
-            padding: 50px;
-            border-radius: 15px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            max-width: 650px;
+            width: 90%;
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 40px;
+            border-radius: 24px;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+            text-align: center;
         }
-        h1 { font-size: 3.5em; margin-bottom: 10px; }
-        p { font-size: 1.4em; margin: 15px 0; }
-        .success { color: #90EE90; font-size: 1.8em; margin: 25px 0; }
-        .info { margin-top: 40px; font-size: 1.2em; opacity: 0.9; }
+        h1 { 
+            font-size: 2.8em; 
+            margin-bottom: 5px; 
+            background: linear-gradient(45deg, #00f2fe, #4facfe);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .subtitle {
+            color: #8a8a9e;
+            font-size: 1.1em;
+            margin-top: 0;
+            margin-bottom: 30px;
+            letter-spacing: 1px;
+        }
+        .success-badge { 
+            background: rgba(0, 230, 118, 0.15);
+            color: #00e676; 
+            padding: 10px 20px;
+            border-radius: 50px;
+            display: inline-block;
+            font-size: 1.1em; 
+            font-weight: 600;
+            margin-bottom: 30px;
+            border: 1px solid rgba(0, 230, 118, 0.3);
+        }
+        /* Grid Info */
+        .info-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            text-align: left;
+            margin-top: 20px;
+        }
+        .info-card {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            padding: 15px;
+            border-radius: 12px;
+        }
+        .info-card span {
+            display: block;
+            font-size: 0.85em;
+            color: #8a8a9e;
+            text-transform: uppercase;
+            margin-bottom: 5px;
+        }
+        .info-card strong {
+            font-size: 1.1em;
+            color: #ffffff;
+        }
+        .status-active {
+            color: #00e676 !important;
+        }
+        .footer-text {
+            margin-top: 35px;
+            font-size: 0.85em;
+            color: #5a5a75;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Welcome</h1>
-        <p class="success">✅ FreeSWITCH সার্ভার সফলভাবে ইনস্টল হয়েছে!</p>
-        <p>আপনার সার্ভার এখন প্রস্তুত।</p>
+        <h1>FreeSWITCH Server</h1>
+        <div class="subtitle">AUTOMATED VOIP PLATFORM</div>
         
-        <div class="info">
-            <strong>Server IP:</strong> <?= $ip ?><br><br>
-            <strong>Time:</strong> <?= date('Y-m-d H:i:s') ?><br><br>
-            <strong>Status:</strong> Running
+        <div class="success-badge">✓ সার্ভার সফলভাবে ইনস্টল ও কনফিগার হয়েছে</div>
+        
+        <div class="info-grid">
+            <div class="info-card">
+                <span>Server IP</span>
+                <strong><?= htmlspecialchars($ip) ?></strong>
+            </div>
+            <div class="info-card">
+                <span>System Time</span>
+                <strong><?= date('Y-m-d H:i:s') ?></strong>
+            </div>
+            <div class="info-card">
+                <span>FreeSWITCH Status</span>
+                <strong class="<?= $fs_status === 'active' ? 'status-active' : '' ?>"><?= ucfirst($fs_status) ?></strong>
+            </div>
+            <div class="info-card">
+                <span>Fail2Ban Security</span>
+                <strong class="<?= $f2b_status === 'active' ? 'status-active' : '' ?>"><?= ucfirst($f2b_status) ?></strong>
+            </div>
         </div>
+        
+        <div class="footer-text"> Powered by PHP 8.2 & Apache2 Architecture </div>
     </div>
 </body>
 </html>
 EOF
 
-# Set proper permissions
+# সঠিক পারমিশন সেট করা
 chown -R www-data:www-data /var/www/html
 chmod -R 755 /var/www/html
 
-# Restart Apache
+# Apache রিস্টার্ট
 systemctl restart apache2
 
-echo "✅ Welcome Page তৈরি হয়েছে!"
+echo "✅ Welcome Page এবং PHP ইন্টিগ্রেশন সম্পন্ন হয়েছে!"
 
-# =======================
-# Final Message
-# =======================
+# ==========================================
+# ফাইনাল সামারি মেসেজ
+# ==========================================
 echo ""
-echo "========================================"
-echo "🎉 ইনস্টলেশন সম্পূর্ণ হয়েছে!"
-echo "========================================"
+echo "=========================================================="
+echo "🎉 অভিনন্দন! অল-ইন-ওয়ান ইনস্টলেশন সম্পূর্ণ হয়েছে।"
+echo "=========================================================="
 echo ""
-echo "🌐 ব্রাউজারে খুলুন: http://$(curl -s ifconfig.me || echo 'YOUR_SERVER_IP')"
-echo "🔧 FreeSWITCH CLI: fs_cli -rRS"
+echo "🌐 লাইভ ওয়েব ড্যাশবোর্ড দেখুন: http://$(curl -s ifconfig.me || echo 'YOUR_SERVER_IP')"
+echo "🔒 Security: Fail2Ban সক্রিয় আছে এবং পোর্ট (5060/5061) মনিটর করছে।"
+echo "🔧 FreeSWITCH CLI অ্যাক্সেস করতে লিখুন: fs_cli -rRS"
 echo ""
-echo "✅ সবকিছু অটোমেটিক হয়ে গেছে।"
+echo "🔥 সবকিছু অটোমেট ও অপ্টিমাইজড করা হয়েছে।"
