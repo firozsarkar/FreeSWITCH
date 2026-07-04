@@ -1,124 +1,66 @@
 #!/bin/bash
+# =====================================================================
+# fix-acl.sh
+# apply-inbound-acl রিমুভ করে (যেটা বৈধ extension/gateway ব্লক করছিল)
+# শুধু auth-calls=true রাখা হবে — যা IP নির্বিশেষে সঠিক user/pass লাগবে
+# =====================================================================
 
-echo "=========================================="
-echo " FreeSWITCH Fail2Ban FULL AUTO FIX"
-echo "=========================================="
+set -e
 
-# Root check
 if [ "$EUID" -ne 0 ]; then
-  echo "Run as root"
-  exit 1
-fi
-
-echo "[1/10] Updating packages..."
-apt update -y
-
-echo "[2/10] Installing Fail2Ban..."
-apt install fail2ban iptables -y
-
-echo "[3/10] Removing old configs..."
-rm -f /etc/fail2ban/jail.local
-rm -f /etc/fail2ban/filter.d/freeswitch.conf
-
-echo "[4/10] Creating FreeSWITCH filter..."
-
-cat > /etc/fail2ban/filter.d/freeswitch.conf << 'EOF'
-[Definition]
-
-failregex = .*SIP auth failure.*ip=<HOST>.*
-            .*AUTH FAILURE.*<HOST>.*
-            .*invalid password.*<HOST>.*
-            .*wrong password.*<HOST>.*
-            .*Rejected by acl.*<HOST>.*
-            .*Can't find user.*from <HOST>.*
-            .*registration failure.*<HOST>.*
-
-ignoreregex =
-EOF
-
-echo "[5/10] Checking FreeSWITCH log..."
-
-mkdir -p /var/log/freeswitch
-
-touch /var/log/freeswitch/freeswitch.log
-
-chmod 644 /var/log/freeswitch/freeswitch.log
-
-echo "[6/10] Creating jail.local..."
-
-cat > /etc/fail2ban/jail.local << 'EOF'
-[DEFAULT]
-bantime = 3600
-findtime = 600
-maxretry = 5
-backend = auto
-banaction = iptables-multiport
-ignoreip = 127.0.0.1/8
-
-[sshd]
-enabled = false
-
-[freeswitch]
-enabled = true
-filter = freeswitch
-port = 5060,5061
-protocol = all
-logpath = /var/log/freeswitch/freeswitch.log
-backend = auto
-maxretry = 5
-findtime = 600
-bantime = 3600
-
-[recidive]
-enabled = true
-logpath = /var/log/fail2ban.log
-bantime = 604800
-findtime = 86400
-maxretry = 3
-EOF
-
-echo "[7/10] Testing Fail2Ban config..."
-
-fail2ban-client -d > /tmp/fail2ban-test.txt 2>&1
-
-if grep -q "ERROR" /tmp/fail2ban-test.txt; then
-    echo "Fail2Ban config error found!"
-    cat /tmp/fail2ban-test.txt
+    echo "❌ root/sudo দিয়ে চালান।"
     exit 1
 fi
 
-echo "[8/10] Restarting Fail2Ban..."
+INTERNAL_PROFILE="/etc/freeswitch/sip_profiles/internal.xml"
+BACKUP_DIR="/root/freeswitch-security-backup-$(date +%F_%H%M%S)"
+mkdir -p "$BACKUP_DIR"
 
-systemctl daemon-reload
-systemctl enable fail2ban
-systemctl restart fail2ban
+if [ ! -f "$INTERNAL_PROFILE" ]; then
+    echo "❌ $INTERNAL_PROFILE পাওয়া যায়নি।"
+    exit 1
+fi
 
-sleep 5
+cp "$INTERNAL_PROFILE" "$BACKUP_DIR/"
+echo "💾 ব্যাকআপ রাখা হলো: $BACKUP_DIR/$(basename "$INTERNAL_PROFILE")"
 
-echo "[9/10] Service Status..."
-systemctl --no-pager status fail2ban
+# apply-inbound-acl লাইনটা সম্পূর্ণ রিমুভ করা হচ্ছে
+sed -i '/apply-inbound-acl/d' "$INTERNAL_PROFILE"
+echo "✅ apply-inbound-acl প্যারামিটার সরানো হলো।"
+
+# auth-calls=true আছে কিনা নিশ্চিত করা (এটাই মূল সুরক্ষা, এটা রাখা হচ্ছে)
+if grep -q 'name="auth-calls"' "$INTERNAL_PROFILE"; then
+    sed -i 's#<param name="auth-calls"[^/]*/>#<param name="auth-calls" value="true"/>#' "$INTERNAL_PROFILE"
+else
+    sed -i '/<settings>/a\    <param name="auth-calls" value="true"/>' "$INTERNAL_PROFILE"
+fi
+echo "✅ auth-calls=true নিশ্চিত করা হলো (এটাই আসল সুরক্ষা, IP-নির্বিশেষে কাজ করবে)।"
+
+# একই কারণে গেটওয়ে/ট্রাঙ্কের জন্য external প্রোফাইলেও ACL থাকলে চেক
+EXTERNAL_PROFILE="/etc/freeswitch/sip_profiles/external.xml"
+if [ -f "$EXTERNAL_PROFILE" ] && grep -q 'apply-inbound-acl' "$EXTERNAL_PROFILE"; then
+    cp "$EXTERNAL_PROFILE" "$BACKUP_DIR/"
+    echo "⚠️  external.xml এও apply-inbound-acl পাওয়া গেছে — এটাও রিমুভ করা হচ্ছে।"
+    sed -i '/apply-inbound-acl/d' "$EXTERNAL_PROFILE"
+fi
 
 echo ""
-echo "[10/10] Active Jails..."
-fail2ban-client status
+echo "🔄 FreeSWITCH sofia profiles রিলোড করা হচ্ছে..."
+fs_cli -x "reloadacl" || true
+fs_cli -x "sofia profile internal restart" || true
+if [ -f "$EXTERNAL_PROFILE" ]; then
+    fs_cli -x "sofia profile external restart" || true
+fi
 
 echo ""
-echo "=========================================="
-echo " FreeSWITCH Jail Details"
-echo "=========================================="
-
-fail2ban-client status freeswitch
-
+echo "=========================================================="
+echo "✅ ফিক্স সম্পন্ন হয়েছে।"
+echo "=========================================================="
+echo "এখন থেকে:"
+echo "  - যেকোনো IP থেকে extension/gateway রেজিস্টার করতে পারবে"
+echo "  - কিন্তু সঠিক username/password ছাড়া কল/রেজিস্ট্রেশন গ্রহণ হবে না"
+echo "  - fail2ban এখনও ভুল পাসওয়ার্ড দিয়ে বারবার চেষ্টাকারী IP ব্লক করবে"
 echo ""
-echo "=========================================="
-echo " INSTALL COMPLETED SUCCESSFULLY"
-echo "=========================================="
-
-echo ""
-echo "Useful Commands:"
-echo "--------------------------------"
-echo "fail2ban-client status"
-echo "fail2ban-client status freeswitch"
-echo "tail -f /var/log/fail2ban.log"
-echo "watch -n 2 fail2ban-client status freeswitch"
-echo "--------------------------------"
+echo "টেস্ট করুন:"
+echo "  sudo fs_cli -x 'sofia status profile internal'"
+echo "  আপনার সফটফোন/গেটওয়ে থেকে রেজিস্টার করে দেখুন"
