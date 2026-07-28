@@ -34,7 +34,7 @@ TOKEN=sk-XXXXXXXXXXXXXXXX bash -c "$(curl -sSL https://raw.githubusercontent.com
 bash <(curl -s https://raw.githubusercontent.com/firozsarkar/FreeSWITCH/refs/heads/main/php_install.sh)
 ```
 ```bash
-bash <(curl -s https://raw.githubusercontent.com/firozsarkar/FreeSWITCH/refs/heads/main/fullFail2Ban.sh)
+bash <(curl -s https://raw.githubusercontent.com/firozsarkar/FreeSWITCH/refs/heads/main/setup.sh)
 ```
 ```bash
 bash <(curl -s https://raw.githubusercontent.com/firozsarkar/FreeSWITCH/refs/heads/main/Fail2Ban.sh)
